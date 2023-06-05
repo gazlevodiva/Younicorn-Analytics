@@ -7,7 +7,7 @@ uploaded_file = st.file_uploader("Choose a file")
 
 if True:
     # Чтение данных из файла
-    # df = pd.read_excel("export.xlsx")
+    df = pd.read_excel(uploaded_file)
 
     # Преобразование столбца с датой в тип данных datetime
     df['Date'] = pd.to_datetime(df['Created Date UTC'], errors='coerce')
