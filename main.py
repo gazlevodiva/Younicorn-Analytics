@@ -3,11 +3,11 @@ import pandas as pd
 import altair as alt
 
 st.title(" Аналитики Younicorn 📈 ")
-uploaded_file = st.file_uploader("Choose a file")
+# uploaded_file = st.file_uploader("Choose a file")
 
 if True:
     # Чтение данных из файла
-    df = pd.read_excel(uploaded_file)
+    df = pd.read_excel("export.xlsx")
 
     # Преобразование столбца с датой в тип данных datetime
     df['Date'] = pd.to_datetime(df['Created Date UTC'], errors='coerce')
