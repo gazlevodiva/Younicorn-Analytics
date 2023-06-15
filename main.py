@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 
-st.title(" Аналитики Younicorn 📈 ")
-# uploaded_file = st.file_uploader("Choose a file")
+
+st.title(" Аналитика Younicorn 📈 ")
 
 if True:
     # Чтение данных из файла
@@ -15,88 +15,142 @@ if True:
 
     min_date = df['Date'].min()
     max_date = df['Date'].max()  
-    start_date, end_date = st.date_input('Выберите диапазон дат:', [min_date, max_date])
+    start_date, end_date = st.date_input('**Выберите диапазон дат:**', [min_date, max_date])
 
     # Преобразование дат в datetime64
     start_date = pd.to_datetime(start_date)
     end_date = pd.to_datetime(end_date)
 
     # Фильтрация данных по диапазону дат
-    filtered_df = df[(df['Date'] >= start_date) & (df['Date'] <= end_date)]
+    period_df = df[(df['Date'] >= start_date) & (df['Date'] <= end_date)]
+
+    # Проверка диапазона дат
+    period_df['Date'] = period_df['Date'].dt.floor('H' if (end_date - start_date).days < 5 else 'D')
+
+    #### Users cards metrics ####
+    
+    col1, col2, col3 = st.columns(3)
+
+    # Total users count
+    all_users    = df['Telegram Id'].nunique()
+    period_users = period_df['Telegram Id'].nunique()
+
+    col1.metric(
+        label = "Пользователи", 
+        value = all_users, 
+        delta = period_users
+    )
+
+    # Total users with seller id
+    all_sellers    = df[df['Seller Id'] != 0]['Telegram Id'].nunique()
+    period_sellers = period_df[period_df['Seller Id'] != 0]['Telegram Id'].nunique()
+
+    col2.metric(
+        label = "Продавцы", 
+        value = all_sellers, 
+        delta = period_sellers
+    ) 
+
+    # Users blocks the bot
+    all_blocks = df[df['Action'] == 'stop_bot'].shape[0]
+    period_blocks = period_df[period_df['Action'] == 'stop_bot'].shape[0]
+
+    col3.metric(
+        label = "Блокировали", 
+        value = all_blocks, 
+        delta = period_blocks
+    ) 
 
     ###############################################################
 
-    # Кол-во пользователей
-    Total_Users = df['Telegram Id'].unique().tolist()
-    st.write(f"Кол-во пользователей бота: {len(Total_Users)}")
-
-    Total_Users_Sellers = df[df['Seller Id'] != 0]['Telegram Id'].nunique()
-    st.write(f"Кол-во продацов: {Total_Users_Sellers}")    
-
-    # Проверка диапазона дат
-    if (end_date - start_date).days < 5:
-        filtered_df['Date'] = filtered_df['Date'].dt.floor('H')  # Группировка по часам
-    else:
-        filtered_df['Date'] = filtered_df['Date'].dt.floor('D')  # Группировка по дням
-
     # Группировка данных по датам и Telegram ID и подсчет уникальных пользователей
-    daily_active_users = filtered_df.groupby(['Date', 'Telegram Id'])['Telegram Id'].nunique().reset_index(name='Count')
+    daily_active_users = period_df.groupby(['Date', 'Telegram Id'])['Telegram Id'].nunique().reset_index(name='Count')
 
     # Группировка данных по датам и подсчет общего количества активных пользователей в день
     daily_active_users_count = daily_active_users.groupby('Date')['Count'].sum().reset_index()
+    
+    # Получение списка уникальных пользователей
+    unique_users = df['Telegram Id'].unique()
+
+    # Создание словаря для сохранения даты первого действия каждого пользователя
+    first_action_dates = {}
+
+    # Итерация по каждому уникальному пользователю
+    for user in unique_users:
+        # Выбор всех строк для данного пользователя
+        user_rows = df[df['Telegram Id'] == user]
+        
+        # Выбор даты первого действия пользователя
+        first_action_date = user_rows['Date'].min()
+        
+        # Добавление даты первого действия пользователя в словарь
+        first_action_dates[user] = first_action_date
+
+    # Создание списка всех дат или часов в выбранном диапазоне дат
+    all_dates = pd.date_range(start=start_date, end=end_date, freq='D') if (end_date - start_date).days >= 5 else pd.date_range(start=start_date, end=end_date, freq='H')
+
+    # Создание DataFrame для полного набора данных
+    full_data = pd.DataFrame(all_dates, columns=['Date'])
+
+    # Инициализация количества активных и новых пользователей нулями
+    full_data['Active Users'] = 0
+    full_data['New Users'] = 0
+
+    # Получаем только даты из словаря
+    first_action_dates_only_date = {k: v.date() for k, v in first_action_dates.items() if pd.notnull(v)}
+
+    # Если разница между конечной и начальной датой меньше 5 дней, то преобразовываем дату в формат 'datetime'
+    # Иначе - в 'date'
+    if (end_date - start_date).days < 5:
+        for i in range(len(full_data)):
+            datetime = full_data.loc[i, 'Date']
+            if datetime in daily_active_users_count['Date'].values:
+                full_data.loc[i, 'Active Users'] = daily_active_users_count[daily_active_users_count['Date'] == datetime]['Count'].values[0]
+            full_data.loc[i, 'New Users'] = list(first_action_dates.values()).count(datetime)
+    else:
+        for i in range(len(full_data)):
+            date = full_data.loc[i, 'Date'].date()
+            if date in daily_active_users_count['Date'].dt.date.values:
+                full_data.loc[i, 'Active Users'] = daily_active_users_count[daily_active_users_count['Date'].dt.date == date]['Count'].values[0]
+            full_data.loc[i, 'New Users'] = list(first_action_dates_only_date.values()).count(date)
+
+
+    # Переводим данные в "long" формат для корректного отображения легенды
+    full_data_long = full_data.melt('Date', var_name='Category', value_name='Count')
 
     # Построение линейного графика
-    # Создание линейного графика с Altair
-    active_chart = (
-        alt.Chart(daily_active_users_count)
-        .mark_line(color='red')
-        .encode(
-            x='Date:T',
-            y='Count:Q'
-        )
-        .interactive()
-    )
-
-    # Вычисляем дату первого действия каждого пользователя
-    df['First Action Date'] = df.groupby('Telegram Id')['Date'].transform('min')
-
-    # Определяем, является ли действие первым действием пользователя
-    df['Is New User'] = df['Date'] == df['First Action Date']
-
-    # Группируем данные по датам и подсчет общего количества новых пользователей в день
-    daily_new_users = df[df['Is New User']].groupby('Date')['Telegram Id'].nunique().reset_index(name='New Users Count')
-
-    # Проверка диапазона дат
-    if (end_date - start_date).days < 5:
-        daily_new_users['Date'] = daily_new_users['Date'].dt.floor('H')  # Группировка по часам
-    else:
-        daily_new_users['Date'] = daily_new_users['Date'].dt.floor('D')  # Группировка по дням
-
-    # Построение линейного графика для новых пользователей
-    new_users_chart = (
-        alt.Chart(daily_new_users)
-        .mark_line(color='blue')
-        .encode(
-            x='Date:T',
-            y='New Users Count:Q'
-        )
-        .interactive()
-    )
-
-    # Объединение двух графиков
-    combined_chart = alt.layer(active_chart, new_users_chart)
+    chart = alt.Chart(full_data_long).mark_line().encode(
+        x='Date:T',
+        y='Count:Q',
+        color='Category:N',
+        tooltip=['Date', 'Count', 'Category']
+    ).interactive()
 
     # Отображение графика в Streamlit
-    st.write("График активных и новых пользователей")
-    st.altair_chart(combined_chart, use_container_width=True)
+    st.subheader("Активные и новые пользователи")
+    st.altair_chart(chart, use_container_width=True)
 
-    # Группировка данных по Telegram ID и Seller ID и подсчет количества действий каждого пользователя
-    user_activity = filtered_df.groupby(['Telegram Id', 'Seller Id']).size().reset_index(name='Activity Count')
+    ###############################################################
+    
+    # Группировка данных по Action Type и подсчет количества каждого типа
+    action_counts_bar = period_df['Action'].value_counts().reset_index()
 
-    # Сортировка данных по количеству действий
-    user_activity = user_activity.sort_values(by='Activity Count', ascending=False)[:10]
+    # Переименование столбцов для лучшего понимания
+    action_counts_bar.columns = ['Action', 'Count']
 
-    # Отображение таблицы в Streamlit
-    st.write("Таблица самых активных пользователей за указанный период")
-    st.table(user_activity)
+    # Построение столбчатого графика для визуализации количества каждого типа действия
+    action_chart = (
+        alt.Chart(action_counts_bar)
+        .mark_bar()
+        .encode(
+            x='Count',
+            y=alt.Y('Action:N', sort='-x'),
+            tooltip=['Action', 'Count']
+        )
+        .interactive()
+    )
+
+    # Отображение графика в Streamlit
+    st.subheader("Распределение действий пользователей")
+    st.altair_chart(action_chart, use_container_width=True)
 
