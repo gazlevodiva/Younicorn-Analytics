@@ -22,7 +22,7 @@ start_date, end_date = st.date_input('**Выберите диапазон дат
 
 # Преобразование дат в datetime64
 start_date = pd.to_datetime(start_date)
-end_date = pd.to_datetime(end_date)
+end_date   = pd.to_datetime(end_date)
 
 # Фильтрация данных по диапазону дат
 period_df = df[(df['Date'] >= start_date) & (df['Date'] <= end_date)]
@@ -32,15 +32,15 @@ period_df['Date'] = period_df['Date'].dt.floor('H' if (end_date - start_date).da
 
 # Метрики для пользователей
 # Total users count
-all_users = df['Telegram Id'].nunique()
+all_users    = df['Telegram Id'].nunique()
 period_users = period_df['Telegram Id'].nunique()
 
 # Total users with seller id
-all_sellers = df[df['Seller Id'] != 0]['Telegram Id'].nunique()
+all_sellers    = df[df['Seller Id'] != 0]['Telegram Id'].nunique()
 period_sellers = period_df[period_df['Seller Id'] != 0]['Telegram Id'].nunique()
 
 # Users blocks the bot
-all_blocks = df[df['Action'] == 'stop_bot'].shape[0]
+all_blocks    = df[df['Action'] == 'stop_bot'].shape[0]
 period_blocks = period_df[period_df['Action'] == 'stop_bot'].shape[0]
 
 col1, col2, col3 = st.columns(3)
@@ -129,10 +129,10 @@ full_data_long = full_data.melt('Date', var_name='Category', value_name='Count')
 
 # Построение линейного графика
 chart = alt.Chart(full_data_long).mark_line().encode(
-    x='Date:T',
-    y='Count:Q',
-    color='Category:N',
-    tooltip=['Date', 'Count', 'Category']
+    x       = 'Date:T',
+    y       = 'Count:Q',
+    color   = 'Category:N',
+    tooltip = ['Date', 'Count', 'Category']
 ).interactive()
 
 # Отображение графика в Streamlit
@@ -167,17 +167,24 @@ action_chart = (
 st.subheader("Распределение действий пользователей")
 st.altair_chart(action_chart, use_container_width=True)
 
-# Группировка данных по 'Telegram Id' и подсчет количества действий для каждого пользователя
+
+
+# Группировка данных по 'Telegram Id' и 'Seller Id', подсчет количества действий для каждого пользователя
 user_activity = (
-    period_df.groupby('Telegram Id')['Action']
+    period_df.groupby(['Telegram Id', 'Seller Id'])['Action']
     .count()
-    .reset_index(name='Count')
+    .reset_index(name='Actions count')
 )
 
 # Сортировка данных по активности в порядке убывания
-user_activity = user_activity.sort_values(by='Count', ascending=False)
+user_activity = user_activity.sort_values(by='Actions count', ascending=False)
+
+# Преобразование 'Telegram Id' и 'Seller Id' в строковые значения и удаление запятых
+user_activity['Telegram Id'] = user_activity['Telegram Id'].astype(str).replace(',', '', regex=True)
+user_activity['Seller Id'] = user_activity['Seller Id'].astype(str).replace(',', '', regex=True)
 
 # Отображение первых N самых активных пользователей
-N = 10
-st.write(f"Топ-{N} самых активных пользователей:")
-st.write(user_activity.head(N))
+# N = 10
+# st.write(f"Топ-{N} самых активных пользователей:")
+# st.write(user_activity.head(N))
+
