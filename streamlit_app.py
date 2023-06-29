@@ -1,24 +1,28 @@
-# Импорты
+from methods import get_data
+from methods import getUniqActiveUsersPerDay
+
 import streamlit as st
 import pandas as pd
 import altair as alt
+import requests
+import datetime
 
-# Title
+
+
 st.title("Аналитика Younicorn 📈")
 
-# open file
-df = pd.read_excel("export.xlsx")
+# Get data from logs
+df = get_data()
 
-# Преобразование столбца с датой в тип данных datetime
-df['Date'] = pd.to_datetime(df['Created Date UTC'], errors='coerce')
-df = df.dropna(subset=['Date'])
-
-# Получение минимальной и максимальной даты
+# Get min & max date from data
 min_date = df['Date'].min()
 max_date = df['Date'].max()
 
+# Вычисляем дату начала последней недели
+start_week_date = max_date - datetime.timedelta(days=10)
+
 # Получение диапазона дат от пользователя
-start_date, end_date = st.date_input('**Выберите диапазон дат:**', [min_date, max_date])
+start_date, end_date = st.date_input('**Выберите диапазон дат:**', [start_week_date, max_date])
 
 # Преобразование дат в datetime64
 start_date = pd.to_datetime(start_date)
@@ -28,7 +32,7 @@ end_date   = pd.to_datetime(end_date)
 period_df = df[(df['Date'] >= start_date) & (df['Date'] <= end_date)]
 
 # Проверка диапазона дат
-period_df['Date'] = period_df['Date'].dt.floor('H' if (end_date - start_date).days < 5 else 'D')
+period_df.loc[:, 'Date'] = period_df['Date'].dt.floor('H' if (end_date - start_date).days <= 5 else 'D')
 
 # Метрики для пользователей
 # Total users count
@@ -43,7 +47,10 @@ period_sellers = period_df[period_df['Seller Id'] != 0]['Telegram Id'].nunique()
 all_blocks    = df[df['Action'] == 'stop_bot'].shape[0]
 period_blocks = period_df[period_df['Action'] == 'stop_bot'].shape[0]
 
-col1, col2, col3 = st.columns(3)
+all_tasks_done    = df[df['Action'] == 'task_stage_5_quiz'].shape[0]
+period_tasks_done = period_df[period_df['Action'] == 'task_stage_5_quiz'].shape[0]
+
+col1, col2, col3, col4 = st.columns(4)
 
 col1.metric(
     label="Пользователи",
@@ -60,23 +67,14 @@ col3.metric(
     value=all_blocks,
     delta=period_blocks
 )
-
-
-
-
-# Группировка данных по датам и Telegram ID и подсчет уникальных пользователей
-daily_active_users = (
-    period_df.groupby(['Date', 'Telegram Id'])['Telegram Id']
-    .nunique()
-    .reset_index(name='Count')
+col4.metric(
+    label="Выполненные задания",
+    value=all_tasks_done,
+    delta=period_tasks_done
 )
 
-# Группировка данных по датам и подсчет общего количества активных пользователей в день
-daily_active_users_count = (
-    daily_active_users.groupby('Date')['Count']
-    .sum()
-    .reset_index()
-)
+
+daily_active_users_count = getUniqActiveUsersPerDay( period_df )
     
 # Получение списка уникальных пользователей
 unique_users = df['Telegram Id'].unique()
@@ -167,24 +165,46 @@ action_chart = (
 st.subheader("Распределение действий пользователей")
 st.altair_chart(action_chart, use_container_width=True)
 
+###############################################################
 
+# Определение функции для обработки данных каждого пользователя
+def process_user_data(df):
+    user_data_df = df.groupby('Telegram Id').agg({'Date': ['min', 'max'], 'Action': 'count'}).reset_index()
+    user_data_df.columns = ['Telegram Id', 'First Action', 'Last Action', 'Actions count']
 
-# Группировка данных по 'Telegram Id' и 'Seller Id', подсчет количества действий для каждого пользователя
-user_activity = (
-    period_df.groupby(['Telegram Id', 'Seller Id'])['Action']
-    .count()
-    .reset_index(name='Actions count')
-)
+    user_task_stage_5_quiz = df[df['Action'] == 'task_stage_5_quiz'].groupby('Telegram Id').size().reset_index()
+    user_task_stage_5_quiz.columns = ['Telegram Id', 'Complete tasks']
 
-# Сортировка данных по активности в порядке убывания
-user_activity = user_activity.sort_values(by='Actions count', ascending=False)
+    user_data_df = pd.merge(user_data_df, user_task_stage_5_quiz, on='Telegram Id', how='left')
+    user_data_df['Telegram Id'] = user_data_df['Telegram Id'].astype(str).replace(',', '', regex=True)
 
-# Преобразование 'Telegram Id' и 'Seller Id' в строковые значения и удаление запятых
-user_activity['Telegram Id'] = user_activity['Telegram Id'].astype(str).replace(',', '', regex=True)
-user_activity['Seller Id'] = user_activity['Seller Id'].astype(str).replace(',', '', regex=True)
+    
+    for chat_id in user_data_df['Telegram Id'].astype(str):
+        # получение данных о пользователе от Telegram API
+        bot_token = st.secrets["bot_token"] # ваш токен
+        url = f"https://api.telegram.org/bot{bot_token}/getChat?chat_id={chat_id}"
+        json_data = requests.get(url, allow_redirects=True).json()
 
-# Отображение первых N самых активных пользователей
-# N = 10
-# st.write(f"Топ-{N} самых активных пользователей:")
-# st.write(user_activity.head(N))
+        user_data = json_data['result'] if json_data['result']['id'] == int(chat_id) else None
 
+        if user_data is not None:
+            
+            user_data_df.loc[user_data_df['Telegram Id'] == str(chat_id), 'First Name'] = user_data.get('first_name', '')
+            user_data_df.loc[user_data_df['Telegram Id'] == str(chat_id), 'Last Name']  = user_data.get('last_name', '')
+            user_data_df.loc[user_data_df['Telegram Id'] == str(chat_id), 'Username']   = user_data.get('username', '')
+
+    return user_data_df
+
+# Подготовка и обработка данных для продавцов
+sellers_df = df[df['Seller Id'] != 0]
+sellers_data = process_user_data(sellers_df)
+
+# Подготовка и обработка данных для не-продавцов
+non_sellers_df = df[df['Seller Id'] == 0]
+non_sellers_data = process_user_data(non_sellers_df)
+
+st.write(f"Таблица продацов:")
+st.write(sellers_data)
+
+st.write(f"Таблица не-продавцов:")
+st.write(non_sellers_data)
